@@ -1,0 +1,786 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>TimeSheet Sync</title>
+  <script src="https://alcdn.msauth.net/browser/2.37.0/js/msal-browser.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.20.2/dist/xlsx.full.min.js"></script>
+  <style>
+    :root{
+      --bg:#0b1220; --card:#111a2e; --card2:#0f1830; --text:#eaf0ff; --muted:#9fb0d0;
+      --pri:#4f8cff; --pri2:#2f6fff; --ok:#27c08a; --warn:#ffcc66; --err:#ff5c7a;
+      --br:16px; --shadow:0 12px 30px rgba(0,0,0,.35);
+    }
+    *{box-sizing:border-box;}
+    body{margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial; background:linear-gradient(180deg,#070c16 0%, #0b1220 60%, #070c16 100%); color:var(--text);}
+    .wrap{max-width:720px; margin:0 auto; padding:14px 14px 90px;}
+    header{position:sticky; top:0; z-index:5; backdrop-filter: blur(10px); background:rgba(7,12,22,.55); border-bottom:1px solid rgba(255,255,255,.06)}
+    .hdr{max-width:720px; margin:0 auto; padding:12px 14px; display:flex; gap:10px; align-items:center; justify-content:space-between;}
+    .title{display:flex; flex-direction:column; gap:2px; min-width:0;}
+    .title .name{font-size:16px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+    .title .sub{font-size:12px; color:var(--muted); display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
+    .chip{display:inline-flex; align-items:center; gap:6px; font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid rgba(255,255,255,.10); background:rgba(255,255,255,.06)}
+    .dot{width:8px; height:8px; border-radius:999px; background:var(--warn)}
+    .dot.ok{background:var(--ok)}
+    .dot.err{background:var(--err)}
+
+    .card{background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03)); border:1px solid rgba(255,255,255,.08); border-radius:var(--br); box-shadow:var(--shadow); padding:14px; margin-top:14px;}
+    .card h3{margin:0 0 10px; font-size:14px; color:#dbe7ff}
+
+    label{display:block; font-size:12px; color:var(--muted); margin-top:10px}
+    .row{display:flex; gap:10px; align-items:end}
+    .col{flex:1}
+
+    input, select, button{font:inherit}
+    input, select{width:100%; padding:12px 12px; border-radius:14px; border:1px solid rgba(255,255,255,.12); background:rgba(5,10,20,.35); color:var(--text); outline:none;}
+    input::placeholder{color:rgba(159,176,208,.7)}
+    input:focus, select:focus{border-color:rgba(79,140,255,.55); box-shadow:0 0 0 3px rgba(79,140,255,.18)}
+
+    .btn{display:inline-flex; align-items:center; justify-content:center; gap:8px; padding:12px 14px; border-radius:14px; border:1px solid rgba(255,255,255,.12); background:rgba(255,255,255,.06); color:var(--text); cursor:pointer;}
+    .btn.primary{background:linear-gradient(180deg,var(--pri),var(--pri2)); border-color:rgba(255,255,255,.08)}
+    .btn.ok{background:linear-gradient(180deg,#2bd6a0,#16b481); border-color:rgba(255,255,255,.08)}
+    .btn.ghost{background:transparent}
+    .btn:disabled{opacity:.45; cursor:not-allowed}
+
+    .fabbar{position:fixed; left:0; right:0; bottom:0; z-index:7; padding:10px 14px calc(10px + env(safe-area-inset-bottom)); background:rgba(7,12,22,.72); backdrop-filter: blur(10px); border-top:1px solid rgba(255,255,255,.08)}
+    .fab{max-width:720px; margin:0 auto; display:flex; gap:10px}
+
+    .help{font-size:12px; color:var(--muted); line-height:1.35}
+
+    /* modal */
+    .modal{position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; align-items:flex-end; justify-content:center; z-index:20}
+    .modal.show{display:flex}
+    .sheet{width:min(720px, 100%); border-radius:22px 22px 0 0; background:linear-gradient(180deg,#0f1730 0%, #0a1022 100%);
+      border:1px solid rgba(255,255,255,.12); box-shadow:var(--shadow); padding:16px;}
+    .sheet h3{margin:0 0 6px}
+    .sheet .actions{display:flex; gap:10px; margin-top:12px}
+
+    .list{margin-top:10px; display:flex; flex-direction:column; gap:8px}
+    .item{display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; border-radius:14px; border:1px solid rgba(255,255,255,.10); background:rgba(255,255,255,.04)}
+    .item small{color:var(--muted)}
+
+    .toast{position:fixed; left:50%; transform:translateX(-50%); bottom:90px; background:rgba(15,23,48,.95); border:1px solid rgba(255,255,255,.14);
+      color:var(--text); padding:10px 12px; border-radius:14px; box-shadow:var(--shadow); display:none; z-index:30; max-width:720px; width:calc(100% - 28px)}
+    .toast.show{display:block; animation:pop .18s ease-out}
+    @keyframes pop{from{opacity:0; transform:translateX(-50%) translateY(10px)} to{opacity:1; transform:translateX(-50%) translateY(0)}}
+
+    @media (min-width: 760px){
+      .wrap{padding-bottom:40px}
+      .fabbar{position:sticky; bottom:auto; background:transparent; backdrop-filter:none; border-top:none; padding:0}
+      .fab{padding:14px 0 0}
+    }
+  </style>
+</head>
+<body>
+<header>
+  <div class="hdr">
+    <div class="title">
+      <div class="name" id="fileName">TimeSheet</div>
+      <div class="sub">
+        <span class="chip"><span class="dot" id="statusDot"></span><span id="statusText">ยังไม่ได้เลือก TimeSheet</span></span>
+        <span class="chip" id="todayChip">📅 -</span>
+      </div>
+    </div>
+    <button class="btn ghost" id="btnChange" onclick="openTimeSheetModal()">เปลี่ยน TimeSheet</button>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="card">
+    <h3>กรอกเวลาวันนี้</h3>
+    <div class="row">
+      <div class="col">
+        <label>Clock In</label>
+        <input type="time" id="clockIn" />
+      </div>
+      <div class="col">
+        <label>Clock Out</label>
+        <input type="time" id="clockOut" />
+      </div>
+    </div>
+
+    <label>Customer Name</label>
+    <div class="row">
+      <div class="col">
+        <input id="customerInput" list="customerList" placeholder="เลือก/พิมพ์เพื่อค้นหา" />
+        <datalist id="customerList"></datalist>
+      </div>
+      <button class="btn" style="width:120px" onclick="addCustom('customer')">➕ Add</button>
+    </div>
+
+    <label>Location</label>
+    <div class="row">
+      <div class="col">
+        <input id="locationInput" list="locationList" placeholder="เลือก/พิมพ์เพื่อค้นหา" />
+        <datalist id="locationList"></datalist>
+      </div>
+      <button class="btn" style="width:120px" onclick="addCustom('location')">➕ Add</button>
+    </div>
+
+    <label>Type of Service</label>
+    <div class="row">
+      <div class="col">
+        <input id="serviceInput" list="serviceList" placeholder="เลือก/พิมพ์เพื่อค้นหา" />
+        <datalist id="serviceList"></datalist>
+      </div>
+      <button class="btn" style="width:120px" onclick="addCustom('service')">➕ Add</button>
+    </div>
+
+    <p class="help" style="margin:10px 0 0">
+      • แอพจะค้นหา “วันที่วันนี้” ในทุกชีท แล้วกรอกลงแถวที่ตรงกับ Column B (Date) ตามไฟล์ต้นฉบับของคุณ citeturn7search1<br/>
+      • จะกรอกเวลาใน Clock in (คอลัมน์ D) และ Clock out (คอลัมน์ F) เพื่อไม่ทับสูตรของ “Start work / Finish work” ในไฟล์ citeturn7search1
+    </p>
+  </div>
+
+  <div class="card" id="customCard" style="display:none">
+    <h3>จัดการรายการที่เพิ่มเอง (ลบได้เฉพาะที่เพิ่มเอง)</h3>
+    <div class="help">ของเดิมจากไฟล์จะลบไม่ได้ แต่ของที่คุณกด Add เพิ่มเอง สามารถลบได้ที่นี่</div>
+
+    <div class="list" id="customCustomer"></div>
+    <div class="list" id="customLocation"></div>
+    <div class="list" id="customService"></div>
+  </div>
+</div>
+
+<!-- bottom actions -->
+<div class="fabbar">
+  <div class="fab">
+    <button class="btn" id="btnManage" onclick="toggleManage()">🗂️ Manage</button>
+    <button class="btn primary" id="btnReload" onclick="connectAndLoad(true)" disabled>🔄 Refresh</button>
+    <button class="btn ok" id="btnSave" onclick="saveToSharePoint()" disabled>✅ Save Sync</button>
+  </div>
+</div>
+
+<!-- TimeSheet modal -->
+<div class="modal" id="tsModal" role="dialog" aria-modal="true">
+  <div class="sheet">
+    <h3>ตั้งค่า TimeSheet</h3>
+    <div class="help">
+      กรุณาใส่ “SharePoint link ของไฟล์ Excel” (บังคับ) แล้วกด <b>Connect & Load</b> เพื่อเริ่มใช้งาน<br/>
+      ระบบจะจำไฟล์เดิมและโหลดจากแคชครั้งถัดไป (ไม่ต้องโหลดใหม่ทุกครั้ง)
+    </div>
+    <label>Link path (editable)</label>
+    <input id="tsLink" placeholder="วางลิงก์ SharePoint ของไฟล์ TimeSheet" />
+    <div class="actions">
+      <button class="btn" onclick="closeTimeSheetModal()">ยกเลิก</button>
+      <button class="btn primary" onclick="saveLinkAndLoad()">Connect & Load</button>
+    </div>
+    <p class="help" style="margin-top:10px">
+      หมายเหตุ: ต้องให้สิทธิ์แอพ (Microsoft Entra/Azure App) เพื่อเรียก Microsoft Graph และเขียนไฟล์กลับ SharePoint
+    </p>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/**********************
+ * CONFIG (ต้องกรอกก่อนใช้งานจริง)
+ **********************/
+const CONFIG = {
+  clientId: 'YOUR_CLIENT_ID',
+  tenantId: 'YOUR_TENANT_ID',
+  // ค่าเริ่มต้นลิงก์ที่คุณให้มา (แก้ได้ในแอพ)
+  defaultLink: 'https://schmollgroup.sharepoint.com/:x:/s/EngineersThailand/IQBRf3e_vcTTQKURi2M7ZWjuAcpw_5tfAqoaueW5OkrMYmI?e=AwOfNY'
+};
+
+/**********************
+ * STATE
+ **********************/
+let msalInstance;
+let account = null;
+let token = null;
+let driveId = null;
+let itemId = null;
+let fileName = 'TimeSheet';
+let wb = null;
+
+// base options from excel vs custom options
+let base = { customer:new Set(), location:new Set(), service:new Set() };
+let custom = { customer:new Set(), location:new Set(), service:new Set() };
+
+/**********************
+ * UTIL
+ **********************/
+const $ = (id)=>document.getElementById(id);
+function toast(msg, kind='info'){
+  const t=$('toast');
+  t.textContent=msg;
+  t.style.borderColor = kind==='err' ? 'rgba(255,92,122,.45)' : kind==='ok' ? 'rgba(39,192,138,.45)' : 'rgba(255,255,255,.14)';
+  t.classList.add('show');
+  clearTimeout(window.__toastTimer);
+  window.__toastTimer=setTimeout(()=>t.classList.remove('show'), 3200);
+}
+function setStatus(text, state='warn'){
+  $('statusText').textContent = text;
+  const dot=$('statusDot');
+  dot.className='dot' + (state==='ok' ? ' ok' : state==='err' ? ' err' : '');
+}
+function fmtThaiDate(d){
+  const opt = {weekday:'short', year:'numeric', month:'short', day:'2-digit'};
+  return new Intl.DateTimeFormat('th-TH', opt).format(d);
+}
+function todayMDY(d){
+  const mm=String(d.getMonth()+1).padStart(2,'0');
+  const dd=String(d.getDate()).padStart(2,'0');
+  const yy=d.getFullYear();
+  return `${mm}/${dd}/${yy}`;
+}
+
+function base64UrlEncode(str){
+  // utf-8 safe btoa
+  const bytes = new TextEncoder().encode(str);
+  let bin = '';
+  bytes.forEach(b=>bin += String.fromCharCode(b));
+  return btoa(bin).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function shareLinkToShareId(url){
+  return 'u!' + base64UrlEncode(url);
+}
+
+/**********************
+ * IndexedDB (cache)
+ **********************/
+const DB_NAME='timesheet_sync_db';
+const STORE='files';
+function idbOpen(){
+  return new Promise((resolve,reject)=>{
+    const req=indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded=()=>{ req.result.createObjectStore(STORE); };
+    req.onsuccess=()=>resolve(req.result);
+    req.onerror=()=>reject(req.error);
+  });
+}
+async function idbSet(key,val){
+  const db=await idbOpen();
+  return new Promise((resolve,reject)=>{
+    const tx=db.transaction(STORE,'readwrite');
+    tx.objectStore(STORE).put(val,key);
+    tx.oncomplete=()=>resolve();
+    tx.onerror=()=>reject(tx.error);
+  });
+}
+async function idbGet(key){
+  const db=await idbOpen();
+  return new Promise((resolve,reject)=>{
+    const tx=db.transaction(STORE,'readonly');
+    const req=tx.objectStore(STORE).get(key);
+    req.onsuccess=()=>resolve(req.result);
+    req.onerror=()=>reject(req.error);
+  });
+}
+async function idbDel(key){
+  const db=await idbOpen();
+  return new Promise((resolve,reject)=>{
+    const tx=db.transaction(STORE,'readwrite');
+    tx.objectStore(STORE).delete(key);
+    tx.oncomplete=()=>resolve();
+    tx.onerror=()=>reject(tx.error);
+  });
+}
+
+function cacheKeyFromLink(link){
+  return 'cache:' + base64UrlEncode(link);
+}
+
+/**********************
+ * MSAL / Graph
+ **********************/
+function initMsal(){
+  msalInstance = new msal.PublicClientApplication({
+    auth:{
+      clientId: CONFIG.clientId,
+      authority: `https://login.microsoftonline.com/${CONFIG.tenantId}`,
+      redirectUri: (location.origin==='null' ? 'http://localhost' : location.origin)
+    },
+    cache:{ cacheLocation:'localStorage', storeAuthStateInCookie:false }
+  });
+}
+
+async function ensureToken(scopes=["Sites.ReadWrite.All","Files.ReadWrite.All"]){
+  if(!msalInstance) initMsal();
+  const accts = msalInstance.getAllAccounts();
+  if(accts && accts.length>0) account = accts[0];
+
+  try{
+    if(account){
+      const res = await msalInstance.acquireTokenSilent({account, scopes});
+      token = res.accessToken;
+      return token;
+    }
+  }catch(e){
+    // fallthrough to popup
+  }
+
+  const loginRes = await msalInstance.loginPopup({scopes});
+  account = loginRes.account;
+  const tokRes = await msalInstance.acquireTokenSilent({account, scopes}).catch(()=>msalInstance.acquireTokenPopup({scopes}));
+  token = tokRes.accessToken;
+  return token;
+}
+
+async function graphGet(url){
+  await ensureToken();
+  const res = await fetch('https://graph.microsoft.com/v1.0' + url, { headers:{Authorization:'Bearer '+token} });
+  if(!res.ok){
+    const t=await res.text();
+    throw new Error(`Graph GET failed: ${res.status} ${t}`);
+  }
+  return res.json();
+}
+
+async function graphGetBinary(url){
+  await ensureToken();
+  const res = await fetch('https://graph.microsoft.com/v1.0' + url, { headers:{Authorization:'Bearer '+token} });
+  if(!res.ok){
+    const t=await res.text();
+    throw new Error(`Graph GET(bin) failed: ${res.status} ${t}`);
+  }
+  return res.arrayBuffer();
+}
+
+async function graphPutBinary(url, arrayBuffer){
+  await ensureToken();
+  const res = await fetch('https://graph.microsoft.com/v1.0' + url, {
+    method:'PUT',
+    headers:{ Authorization:'Bearer '+token },
+    body: arrayBuffer
+  });
+  if(!res.ok){
+    const t=await res.text();
+    throw new Error(`Graph PUT failed: ${res.status} ${t}`);
+  }
+  return res.json().catch(()=>({}));
+}
+
+/**********************
+ * Excel parsing / matching
+ **********************/
+const IGNORE_SHEETS = new Set(['Data Overview','Categories (2)','Sheet1']);
+
+function normalizeDateCell(v){
+  if(!v) return null;
+  if(v instanceof Date){
+    return todayMDY(v);
+  }
+  // SheetJS with cellDates may still give numbers; handle
+  if(typeof v === 'number'){
+    const d = XLSX.SSF.parse_date_code(v);
+    if(!d) return null;
+    const js = new Date(Date.UTC(d.y, d.m-1, d.d));
+    return todayMDY(new Date(js.getUTCFullYear(), js.getUTCMonth(), js.getUTCDate()));
+  }
+  if(typeof v === 'string'){
+    const s=v.trim();
+    // accept mm/dd/yyyy or m/d/yyyy
+    const m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if(m){
+      const mm=m[1].padStart(2,'0');
+      const dd=m[2].padStart(2,'0');
+      return `${mm}/${dd}/${m[3]}`;
+    }
+  }
+  return null;
+}
+
+function findHeaderRow(aoa){
+  // header row contains 'Name' at A and 'Date' at B
+  for(let r=0;r<Math.min(80, aoa.length);r++){
+    const a=(aoa[r]?.[0]||'').toString().trim();
+    const b=(aoa[r]?.[1]||'').toString().trim();
+    const d=(aoa[r]?.[3]||'').toString().trim().toLowerCase();
+    if(a==='Name' && b==='Date' && (d==='clock in' || d==='Clock in'.toLowerCase())) return r;
+  }
+  return -1;
+}
+
+function updateTodayRowInSheet(sheetName, aoa, payload){
+  const header = findHeaderRow(aoa);
+  if(header<0) return null;
+  const target = todayMDY(new Date());
+
+  for(let r=header+1; r<aoa.length; r++){
+    const nameCell = aoa[r]?.[0];
+    const dateCell = aoa[r]?.[1];
+    const nameStr = (nameCell||'').toString().trim();
+
+    if(nameStr==='Total') break;
+    const nd = normalizeDateCell(dateCell);
+    if(!nd) continue;
+
+    if(nd === target){
+      // D = clock in, F = clock out, J/K/L
+      aoa[r][3] = payload.clockIn || aoa[r][3] || null;
+      aoa[r][5] = payload.clockOut || aoa[r][5] || null;
+      aoa[r][9] = payload.customer || aoa[r][9] || null;
+      aoa[r][10] = payload.location || aoa[r][10] || null;
+      aoa[r][11] = payload.service || aoa[r][11] || null;
+      return {sheetName, rowIndex:r+1}; // 1-based
+    }
+  }
+  return null;
+}
+
+function rebuildLists(){
+  const cust = new Set([...base.customer, ...custom.customer]);
+  const loc = new Set([...base.location, ...custom.location]);
+  const svc = new Set([...base.service, ...custom.service]);
+
+  fillDatalist('customerList', cust);
+  fillDatalist('locationList', loc);
+  fillDatalist('serviceList', svc);
+
+  // ensure current value remains if exists
+  if(!$('customerInput').value && cust.size) $('customerInput').value = [...cust][0];
+  if(!$('locationInput').value && loc.size) $('locationInput').value = [...loc][0];
+  if(!$('serviceInput').value && svc.size) $('serviceInput').value = [...svc][0];
+
+  renderCustomManage();
+}
+
+function fillDatalist(id, setVals){
+  const dl = $(id);
+  dl.innerHTML='';
+  [...setVals].sort((a,b)=>a.localeCompare(b)).forEach(v=>{
+    const opt=document.createElement('option');
+    opt.value=v;
+    dl.appendChild(opt);
+  });
+}
+
+function loadDropdownFromWorkbook(){
+  base = { customer:new Set(), location:new Set(), service:new Set() };
+  const cat = wb.Sheets['Categories (2)'];
+  if(!cat){
+    toast('ไม่พบชีท Categories (2) ในไฟล์', 'err');
+    return;
+  }
+  const rows = XLSX.utils.sheet_to_json(cat, {defval:''});
+  rows.forEach(r=>{
+    const c=(r['Customer Name']||'').toString().trim();
+    const l=(r['Location']||'').toString().trim();
+    const s=(r['Type of ServIce']||r['Type of Service']||'').toString().trim();
+    if(c) base.customer.add(c);
+    if(l) base.location.add(l);
+    if(s) base.service.add(s);
+  });
+
+  // load custom from storage (scoped by link)
+  const link = $('tsLink').value.trim() || localStorage.getItem('timesheet_link') || CONFIG.defaultLink;
+  const scoped = 'custom:'+base64UrlEncode(link);
+  try{
+    const saved = JSON.parse(localStorage.getItem(scoped) || '{}');
+    custom.customer = new Set((saved.customer||[]).map(x=>String(x).trim()).filter(Boolean));
+    custom.location = new Set((saved.location||[]).map(x=>String(x).trim()).filter(Boolean));
+    custom.service  = new Set((saved.service ||[]).map(x=>String(x).trim()).filter(Boolean));
+  }catch{ /* ignore */ }
+
+  rebuildLists();
+}
+
+function persistCustom(){
+  const link = localStorage.getItem('timesheet_link') || CONFIG.defaultLink;
+  const scoped = 'custom:'+base64UrlEncode(link);
+  const obj = {
+    customer:[...custom.customer],
+    location:[...custom.location],
+    service:[...custom.service]
+  };
+  localStorage.setItem(scoped, JSON.stringify(obj));
+}
+
+/**********************
+ * UI actions
+ **********************/
+function openTimeSheetModal(force=false){
+  $('tsModal').classList.add('show');
+  if(force) $('tsLink').focus();
+}
+function closeTimeSheetModal(){
+  $('tsModal').classList.remove('show');
+}
+
+function toggleManage(){
+  const card=$('customCard');
+  card.style.display = (card.style.display==='none' ? 'block' : 'none');
+}
+
+function addCustom(kind){
+  const map = {customer:'Customer Name', location:'Location', service:'Type of Service'};
+  const label = map[kind] || kind;
+  const v = prompt(`เพิ่มรายการใหม่: ${label}`);
+  if(!v) return;
+  const val=v.trim();
+  if(!val) return;
+
+  // don't add duplicates
+  if(base[kind].has(val)){
+    toast('มีอยู่แล้วในรายการเดิม (ลบไม่ได้)', 'info');
+    // set input
+    if(kind==='customer') $('customerInput').value=val;
+    if(kind==='location') $('locationInput').value=val;
+    if(kind==='service') $('serviceInput').value=val;
+    return;
+  }
+  custom[kind].add(val);
+  persistCustom();
+  rebuildLists();
+  if(kind==='customer') $('customerInput').value=val;
+  if(kind==='location') $('locationInput').value=val;
+  if(kind==='service') $('serviceInput').value=val;
+  toast('เพิ่มรายการแล้ว (ลบได้ภายหลัง)', 'ok');
+}
+
+function removeCustom(kind, val){
+  if(!custom[kind].has(val)) return;
+  custom[kind].delete(val);
+  persistCustom();
+  rebuildLists();
+  toast('ลบรายการที่เพิ่มเองแล้ว', 'ok');
+}
+
+function renderCustomManage(){
+  const sec = {
+    customer: $('customCustomer'),
+    location: $('customLocation'),
+    service: $('customService')
+  };
+  sec.customer.innerHTML='';
+  sec.location.innerHTML='';
+  sec.service.innerHTML='';
+
+  function section(kind, el){
+    const list=[...custom[kind]].sort((a,b)=>a.localeCompare(b));
+    if(list.length===0) return;
+    const head=document.createElement('div');
+    head.className='item';
+    head.innerHTML = `<div><b>${kind.toUpperCase()}</b><br><small>รายการที่เพิ่มเอง: ${list.length}</small></div><div></div>`;
+    el.appendChild(head);
+    list.forEach(v=>{
+      const row=document.createElement('div');
+      row.className='item';
+      row.innerHTML = `<div>${v}<br><small>ลบได้</small></div>`;
+      const btn=document.createElement('button');
+      btn.className='btn';
+      btn.style.width='90px';
+      btn.textContent='ลบ';
+      btn.onclick=()=>removeCustom(kind, v);
+      row.appendChild(btn);
+      el.appendChild(row);
+    });
+  }
+  section('customer', sec.customer);
+  section('location', sec.location);
+  section('service', sec.service);
+}
+
+/**********************
+ * Timesheet flow
+ **********************/
+async function saveLinkAndLoad(){
+  const link = $('tsLink').value.trim();
+  if(!link){
+    toast('กรุณากรอกลิงก์ TimeSheet ก่อน', 'err');
+    $('tsLink').focus();
+    return;
+  }
+  localStorage.setItem('timesheet_link', link);
+  await connectAndLoad(false);
+}
+
+async function connectAndLoad(forceRefresh=false){
+  const link = (localStorage.getItem('timesheet_link') || '').trim();
+  if(!link){
+    openTimeSheetModal(true);
+    setStatus('กรุณาใส่ลิงก์ TimeSheet', 'err');
+    return;
+  }
+
+  try{
+    setStatus('กำลังเชื่อมต่อ SharePoint…', 'warn');
+
+    // 1) try load cached workbook if not forceRefresh
+    const key = cacheKeyFromLink(link);
+    if(!forceRefresh){
+      const cached = await idbGet(key);
+      if(cached && cached.buffer){
+        driveId = cached.driveId; itemId = cached.itemId; fileName = cached.fileName || 'TimeSheet';
+        $('fileName').textContent = fileName;
+        wb = XLSX.read(cached.buffer, {type:'array', cellDates:true});
+        loadDropdownFromWorkbook();
+        setStatus('พร้อมใช้งาน (จากแคช)', 'ok');
+        enableActions(true);
+        closeTimeSheetModal();
+        return;
+      }
+    }
+
+    // 2) resolve share link to driveItem
+    const shareId = shareLinkToShareId(link);
+    const driveItem = await graphGet(`/shares/${shareId}/driveItem`);
+    driveId = driveItem.parentReference?.driveId;
+    itemId  = driveItem.id;
+    fileName = driveItem.name || 'TimeSheet';
+    $('fileName').textContent = fileName;
+
+    // 3) download content
+    const buf = await graphGetBinary(`/drives/${driveId}/items/${itemId}/content`);
+    wb = XLSX.read(buf, {type:'array', cellDates:true});
+
+    // 4) cache
+    await idbSet(key, {driveId, itemId, fileName, buffer: buf, cachedAt: Date.now()});
+
+    // 5) load dropdown lists
+    loadDropdownFromWorkbook();
+
+    setStatus('พร้อมใช้งาน', 'ok');
+    enableActions(true);
+    closeTimeSheetModal();
+    toast('โหลดไฟล์สำเร็จ', 'ok');
+
+  }catch(e){
+    console.error(e);
+    setStatus('เชื่อมต่อไม่สำเร็จ', 'err');
+    enableActions(false);
+    toast('เชื่อมต่อ/โหลดไฟล์ไม่ได้: ' + (e?.message||e), 'err');
+    openTimeSheetModal(true);
+  }
+}
+
+function enableActions(on){
+  $('btnSave').disabled = !on;
+  $('btnReload').disabled = !on;
+}
+
+function validatePick(kind, value){
+  const v=(value||'').trim();
+  if(!v) return {ok:false, value:v, reason:'empty'};
+  const allowed = new Set([...base[kind], ...custom[kind]]);
+  if(allowed.has(v)) return {ok:true, value:v};
+  return {ok:false, value:v, reason:'not_in_list'};
+}
+
+async function saveToSharePoint(){
+  if(!wb || !driveId || !itemId){
+    toast('ยังไม่ได้โหลด TimeSheet', 'err');
+    openTimeSheetModal(true);
+    return;
+  }
+
+  // validate dropdown values
+  const customerV = $('customerInput').value;
+  const locationV = $('locationInput').value;
+  const serviceV  = $('serviceInput').value;
+
+  const v1 = validatePick('customer', customerV);
+  const v2 = validatePick('location', locationV);
+  const v3 = validatePick('service',  serviceV);
+
+  for(const [kind,res] of [['customer',v1],['location',v2],['service',v3]]){
+    if(!res.ok){
+      if(res.reason==='empty'){
+        toast(`กรุณาเลือก ${kind} ก่อนบันทึก`, 'err');
+        return;
+      }
+      if(res.reason==='not_in_list'){
+        const yn = confirm(`"${res.value}" ไม่อยู่ในรายการ\nต้องการเพิ่มเป็นรายการใหม่ (Add) ไหม?`);
+        if(yn){
+          custom[kind].add(res.value);
+          persistCustom();
+          rebuildLists();
+        }else{
+          return;
+        }
+      }
+    }
+  }
+
+  const clockIn = $('clockIn').value;
+  const clockOut = $('clockOut').value;
+  if(!clockIn && !clockOut){
+    const yn = confirm('ยังไม่ได้กรอก Clock In/Out เลย\nต้องการบันทึกเฉพาะ Customer/Location/Service ไหม?');
+    if(!yn) return;
+  }
+
+  try{
+    $('btnSave').disabled = true;
+    setStatus('กำลังบันทึก…', 'warn');
+
+    // prepare payload
+    const payload = {
+      clockIn: clockIn ? clockIn + ':00' : null,
+      clockOut: clockOut ? clockOut + ':00' : null,
+      customer: v1.value.trim(),
+      location: v2.value.trim(),
+      service: v3.value.trim()
+    };
+
+    const todayStr = todayMDY(new Date());
+    let updated = null;
+
+    for(const name of wb.SheetNames){
+      if(IGNORE_SHEETS.has(name)) continue;
+      const ws = wb.Sheets[name];
+      if(!ws) continue;
+      const aoa = XLSX.utils.sheet_to_json(ws, {header:1, defval:null, blankrows:false});
+      const res = updateTodayRowInSheet(name, aoa, payload);
+      if(res){
+        wb.Sheets[name] = XLSX.utils.aoa_to_sheet(aoa);
+        updated = res;
+        break; // update first match
+      }
+    }
+
+    if(!updated){
+      setStatus('ไม่พบวันที่ในไฟล์', 'err');
+      toast(`ไม่พบวันที่ ${todayStr} ในทุกชีท`, 'err');
+      return;
+    }
+
+    // write workbook to arraybuffer
+    const out = XLSX.write(wb, {bookType:'xlsx', type:'array'});
+
+    // upload back to sharepoint
+    await graphPutBinary(`/drives/${driveId}/items/${itemId}/content`, out);
+
+    // update cache
+    const link = localStorage.getItem('timesheet_link');
+    await idbSet(cacheKeyFromLink(link), {driveId, itemId, fileName, buffer: out, cachedAt: Date.now()});
+
+    setStatus(`บันทึกแล้ว (Sheet: ${updated.sheetName}, Row: ${updated.rowIndex})`, 'ok');
+    toast('✅ Save + Sync สำเร็จ', 'ok');
+
+  }catch(e){
+    console.error(e);
+    setStatus('บันทึกไม่สำเร็จ', 'err');
+    toast('❌ Save ไม่สำเร็จ: ' + (e?.message||e), 'err');
+  }finally{
+    $('btnSave').disabled = false;
+  }
+}
+
+/**********************
+ * INIT
+ **********************/
+(function init(){
+  // show today
+  const d=new Date();
+  $('todayChip').textContent = '📅 ' + fmtThaiDate(d);
+
+  // set default link if none
+  const saved = localStorage.getItem('timesheet_link');
+  $('tsLink').value = saved || CONFIG.defaultLink || '';
+
+  // initial status
+  if(saved){
+    setStatus('กำลังเตรียมแคช…', 'warn');
+    connectAndLoad(false);
+  }else{
+    setStatus('ยังไม่ได้เลือก TimeSheet', 'err');
+    openTimeSheetModal(true);
+  }
+})();
+</script>
+</body>
+</html>
